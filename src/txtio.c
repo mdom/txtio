@@ -96,11 +96,9 @@ time_t parse_timestamp(char **c)
 
 void parse_twtfile(char *c, size_t size, struct tweets *tweets)
 {
+	// TODO use size to check that i don't leave c
 	// start of line
 	while (*c != 0) {
-		if (*(c + 10) == ' ') {
-			*(c + 10) = 'T';
-		}
 
 		struct tweet *t = malloc(sizeof(struct tweet));
 

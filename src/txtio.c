@@ -9,16 +9,22 @@
 #include <assert.h>
 #include <curl/curl.h>
 
-char *urls[] = {
-	"https://domgoergen.com/twtxt/mdom.txt",
-	"http://domgoergen.com/twtxt/8ball.txt",
-	"http://domgoergen.com/twtxt/bullseye.txt",
+struct feed {
+	char *url;
+	char *nick;
+};
+
+struct feed *feeds[] = {
+	&(struct feed){"https://domgoergen.com/twtxt/mdom.txt", "mdom"},
+	&(struct feed){"http://domgoergen.com/twtxt/8ball.txt", "8ball"},
+	&(struct feed){"http://domgoergen.com/twtxt/bullseye.txt", "bullseye"},
 	NULL
 };
 
 struct tweet {
 	time_t timestamp;
 	char *msg;
+	char *nick;
 };
 
 struct tweets {
@@ -30,6 +36,7 @@ struct tweets {
 struct MemoryStruct {
 	char *memory;
 	size_t size;
+	char *nick;
 };
 
 int compare_tweets(const void *s1, const void *s2)
@@ -94,7 +101,7 @@ time_t parse_timestamp(char **c)
 	return mktime(&tm);
 }
 
-void parse_twtfile(char *c, size_t size, struct tweets *tweets)
+void parse_twtfile(char *c, size_t size, struct tweets *tweets, char *nick)
 {
 	// TODO use size to check that i don't leave c
 	// start of line
@@ -122,12 +129,13 @@ void parse_twtfile(char *c, size_t size, struct tweets *tweets)
 		assert(t->msg);
 		memcpy(&(t->msg[0]), start_msg, msg_size);
 		t->msg[msg_size] = 0;
+		t->nick = nick;
 
 		add_to_array(t, tweets);
 
 		// char buffer[6];
 		// strftime(buffer, sizeof(buffer), "%H:%M", gmtime(&(t->timestamp)));
-		
+
 		// skip newline
 		c++;
 	}
@@ -160,8 +168,7 @@ int main(int argc, char **argv, char **env)
 
 	int still_running = 0;
 
-	for (int i = 0; urls[i] != NULL; i++) {
-		char *url = urls[i];
+	for (int i = 0; feeds[i] != NULL; i++) {
 		CURL *c;
 
 		if ((c = curl_easy_init())) {
@@ -169,6 +176,7 @@ int main(int argc, char **argv, char **env)
 			    malloc(sizeof(struct MemoryStruct));
 			chunk->memory = malloc(1);	/* will be grown as needed by the realloc above */
 			chunk->size = 0;	/* no data at this point */
+			chunk->nick = feeds[i]->nick;
 			/* send all data to this function  */
 			curl_easy_setopt(c, CURLOPT_WRITEFUNCTION,
 					 WriteMemoryCallback);
@@ -177,7 +185,7 @@ int main(int argc, char **argv, char **env)
 			curl_easy_setopt(c, CURLOPT_WRITEDATA, (void *)chunk);
 			curl_easy_setopt(c, CURLOPT_PRIVATE, (void *)chunk);
 
-			curl_easy_setopt(c, CURLOPT_URL, url);
+			curl_easy_setopt(c, CURLOPT_URL, feeds[i]->url);
 			curl_multi_add_handle(multi_handle, c);
 		}
 	}
@@ -236,7 +244,8 @@ int main(int argc, char **argv, char **env)
 							      CURLINFO_PRIVATE,
 							      &chunk);
 					parse_twtfile(chunk->memory,
-						      chunk->size, tweets);
+						      chunk->size, tweets,
+						      chunk->nick);
 				}
 
 				curl_multi_remove_handle(multi_handle, e);
@@ -255,7 +264,8 @@ int main(int argc, char **argv, char **env)
 
 	for (int i = 0; i < tweets->size; i++) {
 		struct tweet *t = tweets->data[i];
-		printf("%s%s\n\n", asctime(gmtime(&(t->timestamp))), t->msg);
+		printf("%s - %s%s\n\n", t->nick,
+		       asctime(gmtime(&(t->timestamp))), t->msg);
 	}
 
 	exit(EXIT_SUCCESS);

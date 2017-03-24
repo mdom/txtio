@@ -1,5 +1,6 @@
 #define _XOPEN_SOURCE
 #define _BSD_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,8 +11,8 @@
 
 char *urls[] = {
 	"https://domgoergen.com/twtxt/mdom.txt",
-	// "http://domgoergen.com/twtxt/8ball.txt",
-	// "http://domgoergen.com/twtxt/bullseye.txt",
+	"http://domgoergen.com/twtxt/8ball.txt",
+	"http://domgoergen.com/twtxt/bullseye.txt",
 	NULL
 };
 
@@ -20,68 +21,116 @@ struct tweet {
 	char *msg;
 };
 
+struct tweets {
+	struct tweet **data;
+	size_t size;
+	size_t allocated;
+};
+
 struct MemoryStruct {
 	char *memory;
 	size_t size;
 };
 
-time_t parse_timestamp(char **c ) {
+int compare_tweets(const void *s1, const void *s2)
+{
+	struct tweet *t1 = (struct tweet *)s1;
+	struct tweet *t2 = (struct tweet *)s2;
+	return t1->timestamp - t2->timestamp;
+}
+
+struct tweets *new_array(void)
+{
+	struct tweets *t = malloc(sizeof(struct tweets));
+	t->data = malloc(100 * sizeof(struct tweet *));
+	t->size = 0;
+	t->allocated = 100;
+	return t;
+}
+
+int add_to_array(struct tweet *t, struct tweets *a)
+{
+	if (a->size == a->allocated) {
+		a->allocated *= 2;
+		void *tmp =
+		    realloc(a->data, (a->allocated * sizeof(struct tweet *)));
+		if (!tmp) {
+			fprintf(stderr, "ERROR: Couldn't realloc memory!\n");
+			return (-1);
+		}
+		a->data = tmp;
+	}
+
+	a->data[a->size] = t;
+	a->size++;
+	return a->size;
+}
+
+time_t parse_timestamp(char **c)
+{
 	struct tm tm;
 	memset(&tm, 0, sizeof(struct tm));
-	char *rest ;
+	char *rest;
 
 	if (!(rest = strptime(*c, "%Y-%m-%d", &tm))) {
 		return -1;
 	}
-	*c=rest;
+	*c = rest;
 
 	// skip T or ' '
 	(*c)++;
 
 	rest = strptime(*c, "%H:%M:%S", &tm);
-	if ( ! rest && !(rest = strptime(*c, "%H:%M", &tm))) {
+	if (!rest && !(rest = strptime(*c, "%H:%M", &tm))) {
 		return -1;
 	}
-	*c=rest;
+	*c = rest;
+
+	// TODO eval microseconds and timezone
+	while (**c != ' ' && **c != '\t') {
+		(*c)++;
+	}
 
 	return mktime(&tm);
 }
 
-void parse_twtfile(char *c, size_t size)
+void parse_twtfile(char *c, size_t size, struct tweets *tweets)
 {
 	// start of line
 	while (*c != 0) {
-		if ( *(c+10) == ' ' ) {
-			*(c+10) = 'T';
+		if (*(c + 10) == ' ') {
+			*(c + 10) = 'T';
 		}
 
 		struct tweet *t = malloc(sizeof(struct tweet));
 
 		t->timestamp = parse_timestamp(&c);
 
-		assert( t->timestamp != -1 ) ;
+		assert(t->timestamp != -1);
 
-		while ( *c == ' ' || *c == '\t' ) {
+		while (*c == ' ' || *c == '\t') {
 			c++;
 		}
 
-		char* start_msg = c;
+		char *start_msg = c;
 
-		while ( *c != '\n' ) {
+		while (*c != '\n') {
 			c++;
 		}
 
-		size_t msg_size = c - start_msg ;
+		size_t msg_size = c - start_msg;
 
-		t->msg = malloc( msg_size + 1 );
+		t->msg = malloc(msg_size + 1);
 		assert(t->msg);
-		memcpy(&(t->msg[0]), start_msg, msg_size );
+		memcpy(&(t->msg[0]), start_msg, msg_size);
 		t->msg[msg_size] = 0;
 
-		printf("%d %s\n", (int)t->timestamp, t->msg);
+		add_to_array(t, tweets);
 
-		free(t->msg);
-		free(t);
+		// char buffer[6];
+		// strftime(buffer, sizeof(buffer), "%H:%M", gmtime(&(t->timestamp)));
+		
+		// skip newline
 		c++;
 	}
 }
@@ -115,8 +164,6 @@ int main(int argc, char **argv, char **env)
 
 	for (int i = 0; urls[i] != NULL; i++) {
 		char *url = urls[i];
-		fprintf(stderr, "%s\n", url);
-
 		CURL *c;
 
 		if ((c = curl_easy_init())) {
@@ -140,6 +187,8 @@ int main(int argc, char **argv, char **env)
 	int repeats = 0;
 	/* we start some action by calling perform right away */
 	curl_multi_perform(multi_handle, &still_running);
+
+	struct tweets *tweets = new_array();
 
 	do {
 		CURLMcode mc;
@@ -183,15 +232,14 @@ int main(int argc, char **argv, char **env)
 						      CURLINFO_RESPONSE_CODE,
 						      &code);
 				if (CURLE_OK == res) {
-					fprintf(stderr,
-						"We received code: %ld\n",
-						code);
+					struct MemoryStruct *chunk;
+					res =
+					    curl_easy_getinfo(e,
+							      CURLINFO_PRIVATE,
+							      &chunk);
+					parse_twtfile(chunk->memory,
+						      chunk->size, tweets);
 				}
-				struct MemoryStruct *chunk;
-				res =
-				    curl_easy_getinfo(e, CURLINFO_PRIVATE,
-						      &chunk);
-				parse_twtfile(chunk->memory, chunk->size);
 
 				curl_multi_remove_handle(multi_handle, e);
 				curl_easy_cleanup(e);
@@ -203,5 +251,14 @@ int main(int argc, char **argv, char **env)
 
 	curl_multi_cleanup(multi_handle);
 	curl_global_cleanup();
-	exit(0);
+
+	qsort(tweets->data, tweets->size, sizeof(struct tweet *),
+	      compare_tweets);
+
+	for (int i = 0; i < tweets->size; i++) {
+		struct tweet *t = tweets->data[i];
+		printf("%s%s\n\n", asctime(gmtime(&(t->timestamp))), t->msg);
+	}
+
+	exit(EXIT_SUCCESS);
 }

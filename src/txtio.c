@@ -16,12 +16,19 @@ struct feed {
 	char *nick;
 	char *content;
 	size_t size;
+	long last_modified;
 };
 
 struct feed *feeds[] = {
-	&(struct feed){"https://domgoergen.com/twtxt/mdom.txt", "mdom"},
-	&(struct feed){"http://domgoergen.com/twtxt/8ball.txt", "8ball"},
-	&(struct feed){"http://domgoergen.com/twtxt/bullseye.txt", "bullseye"},
+	&(struct feed){
+		       .url = "http://www.domgoergen.com/twtxt/mdom.txt",
+		       .nick = "mdom"},
+	&(struct feed){
+		       .url = "http://domgoergen.com/twtxt/8ball.txt",
+		       .nick = "8ball"},
+	&(struct feed){
+		       .url = "http://domgoergen.com/twtxt/bullseye.txt",
+		       .nick = "bullseye"},
 	NULL
 };
 
@@ -179,9 +186,10 @@ int main(int argc, char **argv, char **env)
 					 feed_add_content);
 			curl_easy_setopt(c, CURLOPT_WRITEDATA, (void *)feed);
 			curl_easy_setopt(c, CURLOPT_PRIVATE, (void *)feed);
-
 			curl_easy_setopt(c, CURLOPT_URL, feed->url);
 			curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1);
+			curl_easy_setopt(c, CURLOPT_FILETIME, 1);
+
 			curl_multi_add_handle(multi_handle, c);
 		}
 	}
@@ -239,10 +247,16 @@ int main(int argc, char **argv, char **env)
 
 					switch (code) {
 					case 200:
+						//TODO check res!
 						res =
 						    curl_easy_getinfo(e,
 								      CURLINFO_PRIVATE,
 								      &feed);
+						res =
+						    curl_easy_getinfo(e,
+								      CURLINFO_FILETIME,
+								      &(feed->
+									last_modified));
 						parse_twtfile(feed, tweets);
 						break;
 					}

@@ -189,6 +189,7 @@ int main(int argc, char **argv, char **env)
 			curl_easy_setopt(c, CURLOPT_URL, feed->url);
 			curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1);
 			curl_easy_setopt(c, CURLOPT_FILETIME, 1);
+			curl_easy_setopt(c, CURLOPT_USERAGENT, "txtio/1.0");
 
 			curl_multi_add_handle(multi_handle, c);
 		}

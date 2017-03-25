@@ -97,8 +97,9 @@ time_t parse_timestamp(char **c)
 	return mktime(&tm);
 }
 
-void parse_twtfile(char *c, size_t size, struct tweets *tweets, char *nick)
+void parse_twtfile(struct feed *feed, struct tweets *tweets)
 {
+	char *c = feed->content;
 	// TODO use size to check that i don't leave c
 	// start of line
 	while (*c != 0) {
@@ -125,7 +126,7 @@ void parse_twtfile(char *c, size_t size, struct tweets *tweets, char *nick)
 		assert(t->msg);
 		memcpy(&(t->msg[0]), start_msg, msg_size);
 		t->msg[msg_size] = 0;
-		t->nick = nick;
+		t->nick = feed->nick;
 
 		add_to_array(t, tweets);
 
@@ -235,9 +236,7 @@ int main(int argc, char **argv, char **env)
 					    curl_easy_getinfo(e,
 							      CURLINFO_PRIVATE,
 							      &feed);
-					parse_twtfile(feed->content,
-						      feed->size, tweets,
-						      feed->nick);
+					parse_twtfile(feed, tweets);
 				}
 
 				curl_multi_remove_handle(multi_handle, e);

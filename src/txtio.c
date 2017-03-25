@@ -233,12 +233,18 @@ int main(int argc, char **argv, char **env)
 						      CURLINFO_RESPONSE_CODE,
 						      &code);
 				if (CURLE_OK == res) {
+
 					struct feed *feed;
-					res =
-					    curl_easy_getinfo(e,
-							      CURLINFO_PRIVATE,
-							      &feed);
-					parse_twtfile(feed, tweets);
+
+					switch (code) {
+					case 200:
+						res =
+						    curl_easy_getinfo(e,
+								      CURLINFO_PRIVATE,
+								      &feed);
+						parse_twtfile(feed, tweets);
+						break;
+					}
 				}
 
 				curl_multi_remove_handle(multi_handle, e);

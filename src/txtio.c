@@ -181,6 +181,7 @@ int main(int argc, char **argv, char **env)
 			curl_easy_setopt(c, CURLOPT_PRIVATE, (void *)feed);
 
 			curl_easy_setopt(c, CURLOPT_URL, feed->url);
+			curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1);
 			curl_multi_add_handle(multi_handle, c);
 		}
 	}

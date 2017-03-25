@@ -9,6 +9,8 @@
 #include <assert.h>
 #include <curl/curl.h>
 
+char *time_format = "%y-%m-%d %H:%S";
+
 struct feed {
 	char *url;
 	char *nick;
@@ -255,8 +257,17 @@ int main(int argc, char **argv, char **env)
 
 	for (int i = 0; i < tweets->size; i++) {
 		struct tweet *t = tweets->data[i];
-		printf("%s - %s%s\n\n", t->nick,
-		       asctime(gmtime(&(t->timestamp))), t->msg);
+
+		//TODO fix hard limit on timestamp
+		char timestamp[50];
+		int s = strftime(timestamp, sizeof(timestamp), time_format,
+				 localtime(&(t->timestamp)));
+
+		if (!s) {
+			continue;
+		}
+
+		printf("* %s (%s)\n%s\n\n", t->nick, timestamp, t->msg);
 	}
 
 	exit(EXIT_SUCCESS);

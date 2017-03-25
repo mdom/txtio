@@ -12,6 +12,8 @@
 struct feed {
 	char *url;
 	char *nick;
+	char *content;
+	size_t size;
 };
 
 struct feed *feeds[] = {
@@ -31,12 +33,6 @@ struct tweets {
 	struct tweet **data;
 	size_t size;
 	size_t allocated;
-};
-
-struct MemoryStruct {
-	char *memory;
-	size_t size;
-	char *nick;
 };
 
 int compare_tweets(const void *s1, const void *s2)
@@ -142,21 +138,21 @@ void parse_twtfile(char *c, size_t size, struct tweets *tweets, char *nick)
 }
 
 static size_t
-WriteMemoryCallback(void *contents, size_t size, size_t nmemb, void *userp)
+feed_add_content(void *contents, size_t size, size_t nmemb, void *userp)
 {
 	size_t realsize = size * nmemb;
-	struct MemoryStruct *mem = (struct MemoryStruct *)userp;
+	struct feed *feed = (struct feed *)userp;
 
-	mem->memory = realloc(mem->memory, mem->size + realsize + 1);
-	if (mem->memory == NULL) {
+	feed->content = realloc(feed->content, feed->size + realsize + 1);
+	if (feed->content == NULL) {
 		/* out of memory! */
 		printf("not enough memory (realloc returned NULL)\n");
 		return 0;
 	}
 
-	memcpy(&(mem->memory[mem->size]), contents, realsize);
-	mem->size += realsize;
-	mem->memory[mem->size] = 0;
+	memcpy(&(feed->content[feed->size]), contents, realsize);
+	feed->size += realsize;
+	feed->content[feed->size] = 0;
 
 	return realsize;
 }
@@ -169,23 +165,19 @@ int main(int argc, char **argv, char **env)
 	int still_running = 0;
 
 	for (int i = 0; feeds[i] != NULL; i++) {
+		struct feed *feed = feeds[i];
 		CURL *c;
 
 		if ((c = curl_easy_init())) {
-			struct MemoryStruct *chunk =
-			    malloc(sizeof(struct MemoryStruct));
-			chunk->memory = malloc(1);	/* will be grown as needed by the realloc above */
-			chunk->size = 0;	/* no data at this point */
-			chunk->nick = feeds[i]->nick;
-			/* send all data to this function  */
+			feed->content = malloc(1);
+			feed->size = 0;
+
 			curl_easy_setopt(c, CURLOPT_WRITEFUNCTION,
-					 WriteMemoryCallback);
+					 feed_add_content);
+			curl_easy_setopt(c, CURLOPT_WRITEDATA, (void *)feed);
+			curl_easy_setopt(c, CURLOPT_PRIVATE, (void *)feed);
 
-			/* we pass our 'chunk' struct to the callback function */
-			curl_easy_setopt(c, CURLOPT_WRITEDATA, (void *)chunk);
-			curl_easy_setopt(c, CURLOPT_PRIVATE, (void *)chunk);
-
-			curl_easy_setopt(c, CURLOPT_URL, feeds[i]->url);
+			curl_easy_setopt(c, CURLOPT_URL, feed->url);
 			curl_multi_add_handle(multi_handle, c);
 		}
 	}
@@ -238,14 +230,14 @@ int main(int argc, char **argv, char **env)
 						      CURLINFO_RESPONSE_CODE,
 						      &code);
 				if (CURLE_OK == res) {
-					struct MemoryStruct *chunk;
+					struct feed *feed;
 					res =
 					    curl_easy_getinfo(e,
 							      CURLINFO_PRIVATE,
-							      &chunk);
-					parse_twtfile(chunk->memory,
-						      chunk->size, tweets,
-						      chunk->nick);
+							      &feed);
+					parse_twtfile(feed->content,
+						      feed->size, tweets,
+						      feed->nick);
 				}
 
 				curl_multi_remove_handle(multi_handle, e);

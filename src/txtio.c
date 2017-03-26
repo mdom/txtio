@@ -46,9 +46,10 @@ struct tweets {
 
 int compare_tweets(const void *s1, const void *s2)
 {
-	struct tweet *t1 = (struct tweet *)s1;
-	struct tweet *t2 = (struct tweet *)s2;
-	return t1->timestamp - t2->timestamp;
+	struct tweet *t1 = *(struct tweet **)s1;
+	struct tweet *t2 = *(struct tweet **)s2;
+	time_t d = t1->timestamp - t2->timestamp;
+	return d == 0 ? 0 : d < 0 ? -1 : 1;
 }
 
 struct tweets *new_array(void)

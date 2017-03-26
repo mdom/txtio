@@ -10,6 +10,8 @@
 #include <curl/curl.h>
 
 char *time_format = "%y-%m-%d %H:%S";
+char *pager_cmd = "less -R";
+int use_pager = 1;
 
 struct feed {
 	char *url;
@@ -48,7 +50,7 @@ int compare_tweets(const void *s1, const void *s2)
 {
 	struct tweet *t1 = *(struct tweet **)s1;
 	struct tweet *t2 = *(struct tweet **)s2;
-	time_t d = t1->timestamp - t2->timestamp;
+	time_t d = t2->timestamp - t1->timestamp;
 	return d == 0 ? 0 : d < 0 ? -1 : 1;
 }
 
@@ -278,6 +280,11 @@ int main(int argc, char **argv, char **env)
 	qsort(tweets->data, tweets->size, sizeof(struct tweet *),
 	      compare_tweets);
 
+	FILE *pager = stdout;
+	if (use_pager) {
+		pager = popen(pager_cmd, "w");
+	}
+
 	for (int i = 0; i < tweets->size; i++) {
 		struct tweet *t = tweets->data[i];
 
@@ -290,8 +297,10 @@ int main(int argc, char **argv, char **env)
 			continue;
 		}
 
-		printf("* %s (%s)\n%s\n\n", t->nick, timestamp, t->msg);
+		fprintf(pager, "* %s (%s)\n%s\n\n", t->nick, timestamp, t->msg);
 	}
+
+	fclose(pager);
 
 	exit(EXIT_SUCCESS);
 }

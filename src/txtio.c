@@ -170,7 +170,30 @@ feed_add_content(void *contents, size_t size, size_t nmemb, void *userp)
 	return realsize;
 }
 
-int main(int argc, char **argv, char **env)
+void feed_process(CURL * e, struct tweets *tweets)
+{
+	CURLcode res;
+	long code;
+	res = curl_easy_getinfo(e, CURLINFO_RESPONSE_CODE, &code);
+	if (res != CURLE_OK)
+		return;
+
+	struct feed *feed;
+
+	switch (code) {
+	case 200:
+		//TODO check res!
+		res = curl_easy_getinfo(e, CURLINFO_PRIVATE, &feed);
+		res =
+		    curl_easy_getinfo(e,
+				      CURLINFO_FILETIME,
+				      &(feed->last_modified));
+		parse_twtfile(feed, tweets);
+		break;
+	}
+}
+
+struct tweets *feeds_get(struct feed *feeds[])
 {
 	curl_global_init(CURL_GLOBAL_SSL);
 	CURLM *multi_handle = curl_multi_init();
@@ -236,39 +259,15 @@ int main(int argc, char **argv, char **env)
 
 		int msgq = 0;
 		struct CURLMsg *m;
-		CURLcode res;
 		while ((m = curl_multi_info_read(multi_handle, &msgq)) != NULL) {
 			if (m->msg == CURLMSG_DONE) {
 				CURL *e = m->easy_handle;
-				long code;
-				res =
-				    curl_easy_getinfo(e,
-						      CURLINFO_RESPONSE_CODE,
-						      &code);
-				if (CURLE_OK == res) {
-
-					struct feed *feed;
-
-					switch (code) {
-					case 200:
-						//TODO check res!
-						res =
-						    curl_easy_getinfo(e,
-								      CURLINFO_PRIVATE,
-								      &feed);
-						res =
-						    curl_easy_getinfo(e,
-								      CURLINFO_FILETIME,
-								      &(feed->
-									last_modified));
-						parse_twtfile(feed, tweets);
-						break;
-					}
-				}
-
+				feed_process(e, tweets);
 				curl_multi_remove_handle(multi_handle, e);
 				curl_easy_cleanup(e);
+
 			}
+
 		}
 
 	}
@@ -276,9 +275,17 @@ int main(int argc, char **argv, char **env)
 
 	curl_multi_cleanup(multi_handle);
 	curl_global_cleanup();
+	return tweets;
+}
 
+void tweets_sort(struct tweets *tweets)
+{
 	qsort(tweets->data, tweets->size, sizeof(struct tweet *),
 	      compare_tweets);
+}
+
+void tweets_display(struct tweets *tweets)
+{
 
 	FILE *pager = stdout;
 	if (use_pager) {
@@ -301,6 +308,14 @@ int main(int argc, char **argv, char **env)
 	}
 
 	fclose(pager);
+}
+
+int main(int argc, char **argv, char **env)
+{
+	struct tweets *tweets = feeds_get(feeds);
+
+	tweets_sort(tweets);
+	tweets_display(tweets);
 
 	exit(EXIT_SUCCESS);
 }

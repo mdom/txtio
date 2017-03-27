@@ -1,3 +1,4 @@
+#define _DEFAULT_SOURCE
 #define _XOPEN_SOURCE
 #define _BSD_SOURCE
 
@@ -8,6 +9,12 @@
 #include <time.h>
 #include <assert.h>
 #include <curl/curl.h>
+#include <sqlite3.h>
+#include <libgen.h>		// basename
+#include <errno.h>
+
+#include "asprintf/asprintf.h"
+#include "mkdir.h"
 
 char *time_format = "%y-%m-%d %H:%S";
 char *pager_cmd = "less -R";
@@ -20,6 +27,14 @@ struct feed {
 	size_t size;
 	long last_modified;
 };
+
+void feed_free(struct feed *feed)
+{
+	free(feed->url);
+	free(feed->nick);
+	free(feed->content);
+	free(feed);
+}
 
 struct feed *feeds[] = {
 	&(struct feed){
@@ -40,13 +55,28 @@ struct tweet {
 	char *nick;
 };
 
+void tweet_free(struct tweet *tweet)
+{
+	free(tweet->msg);
+	free(tweet->nick);
+	free(tweet);
+}
+
 struct tweets {
 	struct tweet **data;
 	size_t size;
 	size_t allocated;
 };
 
-int compare_tweets(const void *s1, const void *s2)
+void tweets_free(struct tweets *tweets)
+{
+	for (size_t i = 0; i < tweets->size; i++) {
+		tweet_free(tweets->data[i]);
+	}
+	free(tweets);
+}
+
+int tweets_compare(const void *s1, const void *s2)
 {
 	struct tweet *t1 = *(struct tweet **)s1;
 	struct tweet *t2 = *(struct tweet **)s2;
@@ -54,7 +84,7 @@ int compare_tweets(const void *s1, const void *s2)
 	return d == 0 ? 0 : d < 0 ? -1 : 1;
 }
 
-struct tweets *new_array(void)
+struct tweets *tweets_new(void)
 {
 	struct tweets *t = malloc(sizeof(struct tweets));
 	t->data = malloc(100 * sizeof(struct tweet *));
@@ -184,10 +214,9 @@ void feed_process(CURL * e, struct tweets *tweets)
 	case 200:
 		//TODO check res!
 		res = curl_easy_getinfo(e, CURLINFO_PRIVATE, &feed);
-		res =
-		    curl_easy_getinfo(e,
-				      CURLINFO_FILETIME,
-				      &(feed->last_modified));
+		res = curl_easy_getinfo(e,
+					CURLINFO_FILETIME,
+					&(feed->last_modified));
 		parse_twtfile(feed, tweets);
 		break;
 	}
@@ -225,7 +254,7 @@ struct tweets *feeds_get(struct feed *feeds[])
 	/* we start some action by calling perform right away */
 	curl_multi_perform(multi_handle, &still_running);
 
-	struct tweets *tweets = new_array();
+	struct tweets *tweets = tweets_new();
 
 	do {
 		CURLMcode mc;
@@ -281,7 +310,7 @@ struct tweets *feeds_get(struct feed *feeds[])
 void tweets_sort(struct tweets *tweets)
 {
 	qsort(tweets->data, tweets->size, sizeof(struct tweet *),
-	      compare_tweets);
+	      tweets_compare);
 }
 
 void tweets_display(struct tweets *tweets)
@@ -310,12 +339,106 @@ void tweets_display(struct tweets *tweets)
 	fclose(pager);
 }
 
+int sql_do(sqlite3 * db, const char *sql)
+{
+	return sqlite3_exec(db, sql, NULL, NULL, NULL);
+}
+
+void database_create(const char *filename)
+{
+	sqlite3 *db;
+	int rc = sqlite3_open(filename, &db);
+
+	if (rc == SQLITE_OK) {
+		sql_do(db,
+		       "create table followings"
+		       "(nick text unique, url text unique, last_modified )");
+	}
+
+	sqlite3_close(db);
+}
+
+int follow(const char *filename, const char *nick, const char *url)
+{
+	sqlite3 *db;
+	int rc = SQLITE_OK;
+	char *err_msg = NULL;
+
+	rc = sqlite3_open(filename, &db);
+	if (rc != SQLITE_OK) {
+		return rc;
+	}
+
+	char *query =
+	    sqlite3_mprintf
+	    ("insert or replace into followings values ('%q', '%q', 0);", nick,
+	     url);
+
+	rc = sqlite3_exec(db, query, NULL, NULL, &err_msg);
+	if (rc != SQLITE_OK) {
+		fprintf(stderr, "SQL error: %s\n", err_msg);
+		rc = -1;
+	}
+
+	sqlite3_free(err_msg);
+	sqlite3_free(query);
+	sqlite3_close(db);
+
+	return rc;
+}
+
 int main(int argc, char **argv, char **env)
 {
-	struct tweets *tweets = feeds_get(feeds);
+	char *db_file;
+	char *config_dir = getenv("XDG_CONFIG_HOME");
+	if (!config_dir) {
+		if (asprintf(&config_dir, "%s/%s", getenv("HOME"), ".config") ==
+		    -1) {
+			fprintf(stderr, "Can't allocate memory!\n");
+			exit(EXIT_FAILURE);
+		}
+	}
 
-	tweets_sort(tweets);
-	tweets_display(tweets);
+	if (asprintf
+	    (&db_file, "%s/%s/%s", config_dir, basename(argv[0]),
+	     strdup("db.sqlite")) == -1) {
+		fprintf(stderr, "Can't allocate memory!");
+		exit(EXIT_FAILURE);
+	}
+
+	if (mkdir_p(dirname(strdup(db_file))) != 0) {
+		fprintf(stderr, "%s: %s\n", basename(argv[0]), strerror(errno));
+		exit(EXIT_FAILURE);
+	}
+
+	database_create(db_file);
+
+	if (argc == 1) {
+		fprintf(stderr, "%s: Missing subcommand\n", argv[0]);
+		exit(1);
+	}
+
+	if (strcmp(argv[1], "timeline") == 0) {
+
+		struct tweets *tweets = feeds_get(feeds);
+		tweets_sort(tweets);
+		tweets_display(tweets);
+
+		tweets_free(tweets);
+
+	} else if (strcmp(argv[1], "follow") == 0) {
+
+		follow(db_file, argv[2], argv[3]);
+
+	} else {
+
+		fprintf(stderr, "%s: Unknown subcommand \"%s\"\n", argv[0],
+			argv[1]);
+		exit(EXIT_FAILURE);
+
+	}
+
+	free(db_file);
 
 	exit(EXIT_SUCCESS);
 }

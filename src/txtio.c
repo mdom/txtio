@@ -15,6 +15,7 @@
 
 #include "mkdir.h"
 #include "uthash/utstring.h"
+#include "uthash/utarray.h"
 
 char *time_format = "%y-%m-%d %H:%S";
 char *pager_cmd = "less -R";
@@ -68,47 +69,12 @@ struct tweets {
 	size_t allocated;
 };
 
-void tweets_free(struct tweets *tweets)
-{
-	for (size_t i = 0; i < tweets->size; i++) {
-		tweet_free(tweets->data[i]);
-	}
-	free(tweets);
-}
-
 int tweets_compare(const void *s1, const void *s2)
 {
 	struct tweet *t1 = *(struct tweet **)s1;
 	struct tweet *t2 = *(struct tweet **)s2;
 	time_t d = t2->timestamp - t1->timestamp;
 	return d == 0 ? 0 : d < 0 ? -1 : 1;
-}
-
-struct tweets *tweets_new(void)
-{
-	struct tweets *t = malloc(sizeof(struct tweets));
-	t->data = malloc(100 * sizeof(struct tweet *));
-	t->size = 0;
-	t->allocated = 100;
-	return t;
-}
-
-int add_to_array(struct tweet *t, struct tweets *a)
-{
-	if (a->size == a->allocated) {
-		a->allocated *= 2;
-		void *tmp =
-		    realloc(a->data, (a->allocated * sizeof(struct tweet *)));
-		if (!tmp) {
-			fprintf(stderr, "ERROR: Couldn't realloc memory!\n");
-			return (-1);
-		}
-		a->data = tmp;
-	}
-
-	a->data[a->size] = t;
-	a->size++;
-	return a->size;
 }
 
 time_t parse_timestamp(char **c)
@@ -139,7 +105,7 @@ time_t parse_timestamp(char **c)
 	return mktime(&tm);
 }
 
-void parse_twtfile(struct feed *feed, struct tweets *tweets)
+void parse_twtfile(struct feed *feed, UT_array *tweets)
 {
 	char *c = feed->content;
 	// TODO use size to check that i don't leave c
@@ -170,7 +136,7 @@ void parse_twtfile(struct feed *feed, struct tweets *tweets)
 		t->msg[msg_size] = 0;
 		t->nick = feed->nick;
 
-		add_to_array(t, tweets);
+		utarray_push_back(tweets, &t);
 
 		// char buffer[6];
 		// strftime(buffer, sizeof(buffer), "%H:%M", gmtime(&(t->timestamp)));
@@ -200,7 +166,7 @@ feed_add_content(void *contents, size_t size, size_t nmemb, void *userp)
 	return realsize;
 }
 
-void feed_process(CURL * e, struct tweets *tweets)
+void feed_process(CURL * e, UT_array *tweets)
 {
 	CURLcode res;
 	long code;
@@ -222,7 +188,7 @@ void feed_process(CURL * e, struct tweets *tweets)
 	}
 }
 
-struct tweets *feeds_get(struct feed *feeds[])
+UT_array* feeds_get(struct feed *feeds[])
 {
 	curl_global_init(CURL_GLOBAL_SSL);
 	CURLM *multi_handle = curl_multi_init();
@@ -254,7 +220,9 @@ struct tweets *feeds_get(struct feed *feeds[])
 	/* we start some action by calling perform right away */
 	curl_multi_perform(multi_handle, &still_running);
 
-	struct tweets *tweets = tweets_new();
+	UT_array *tweets;
+
+	utarray_new(tweets, &ut_ptr_icd);
 
 	do {
 		CURLMcode mc;
@@ -307,13 +275,12 @@ struct tweets *feeds_get(struct feed *feeds[])
 	return tweets;
 }
 
-void tweets_sort(struct tweets *tweets)
+void tweets_sort(UT_array *tweets)
 {
-	qsort(tweets->data, tweets->size, sizeof(struct tweet *),
-	      tweets_compare);
+	utarray_sort(tweets, tweets_compare);
 }
 
-void tweets_display(struct tweets *tweets)
+void tweets_display(UT_array *tweets)
 {
 
 	FILE *pager = stdout;
@@ -321,8 +288,11 @@ void tweets_display(struct tweets *tweets)
 		pager = popen(pager_cmd, "w");
 	}
 
-	for (int i = 0; i < tweets->size; i++) {
-		struct tweet *t = tweets->data[i];
+	struct tweet ** tweet = NULL;
+
+	while ( (tweet = (struct tweet **)utarray_next(tweets,tweet) )) {
+
+		struct tweet *t = *tweet;
 
 		//TODO fix hard limit on timestamp
 		char timestamp[50];

@@ -13,8 +13,8 @@
 #include <libgen.h>		// basename
 #include <errno.h>
 
-#include "asprintf/asprintf.h"
 #include "mkdir.h"
+#include "uthash/utstring.h"
 
 char *time_format = "%y-%m-%d %H:%S";
 char *pager_cmd = "less -R";
@@ -389,29 +389,25 @@ int follow(const char *filename, const char *nick, const char *url)
 
 int main(int argc, char **argv, char **env)
 {
-	char *db_file;
-	char *config_dir = getenv("XDG_CONFIG_HOME");
-	if (!config_dir) {
-		if (asprintf(&config_dir, "%s/%s", getenv("HOME"), ".config") ==
-		    -1) {
-			fprintf(stderr, "Can't allocate memory!\n");
-			exit(EXIT_FAILURE);
-		}
+	UT_string *db_file;
+	utstring_new(db_file);
+
+	char *xdg_home = getenv("XDG_CONFIG_HOME");
+
+	if ( xdg_home ) {
+		utstring_printf(db_file,strdup(xdg_home));
+	} else {
+		utstring_printf(db_file,"%s/%s", strdup(getenv("HOME")), strdup(".config"));
 	}
 
-	if (asprintf
-	    (&db_file, "%s/%s/%s", config_dir, basename(argv[0]),
-	     strdup("db.sqlite")) == -1) {
-		fprintf(stderr, "Can't allocate memory!");
-		exit(EXIT_FAILURE);
-	}
+        utstring_printf(db_file, "%s/%s", strdup(basename(argv[0])), strdup("db.sqlite"));
 
-	if (mkdir_p(dirname(strdup(db_file))) != 0) {
+	if (mkdir_p(dirname(strdup(utstring_body(db_file)))) != 0) {
 		fprintf(stderr, "%s: %s\n", basename(argv[0]), strerror(errno));
 		exit(EXIT_FAILURE);
 	}
 
-	database_create(db_file);
+	database_create(utstring_body(db_file));
 
 	if (argc == 1) {
 		fprintf(stderr, "%s: Missing subcommand\n", argv[0]);
@@ -427,9 +423,7 @@ int main(int argc, char **argv, char **env)
 		tweets_free(tweets);
 
 	} else if (strcmp(argv[1], "follow") == 0) {
-
-		follow(db_file, argv[2], argv[3]);
-
+		follow(utstring_body(db_file), argv[2], argv[3]);
 	} else {
 
 		fprintf(stderr, "%s: Unknown subcommand \"%s\"\n", argv[0],
@@ -438,7 +432,7 @@ int main(int argc, char **argv, char **env)
 
 	}
 
-	free(db_file);
+	utstring_free(db_file);
 
 	exit(EXIT_SUCCESS);
 }

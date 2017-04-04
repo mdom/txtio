@@ -12,20 +12,20 @@
 #include <sqlite3.h>
 #include <libgen.h>		// basename
 #include <errno.h>
+#include <ctype.h> // iscntrl
 
 #include "mkdir.h"
 #include "uthash/utstring.h"
 #include "uthash/utarray.h"
 
-char *time_format = "%y-%m-%d %H:%S";
+char *time_format = "%Y-%m-%d %H:%S";
 char *pager_cmd = "less -R";
 int use_pager = 1;
 
 struct feed {
 	char *url;
 	char *nick;
-	char *content;
-	size_t size;
+	UT_string *content;
 	long last_modified;
 };
 
@@ -36,19 +36,6 @@ void feed_free(struct feed *feed)
 	free(feed->content);
 	free(feed);
 }
-
-struct feed *feeds[] = {
-	&(struct feed){
-		       .url = "http://www.domgoergen.com/twtxt/mdom.txt",
-		       .nick = "mdom"},
-	&(struct feed){
-		       .url = "http://domgoergen.com/twtxt/8ball.txt",
-		       .nick = "8ball"},
-	&(struct feed){
-		       .url = "http://domgoergen.com/twtxt/bullseye.txt",
-		       .nick = "bullseye"},
-	NULL
-};
 
 struct tweet {
 	time_t timestamp;
@@ -83,13 +70,16 @@ time_t parse_timestamp(char **c)
 	memset(&tm, 0, sizeof(struct tm));
 	char *rest;
 
-	if (!(rest = strptime(*c, "%Y-%m-%d", &tm))) {
+	rest = strptime(*c, "%Y-%m-%d", &tm);
+	if (!rest) {
 		return -1;
 	}
 	*c = rest;
 
 	// skip T or ' '
-	(*c)++;
+	if (**c && (**c == 'T' || **c == ' ')) {
+		(*c)++;
+	}
 
 	rest = strptime(*c, "%H:%M:%S", &tm);
 	if (!rest && !(rest = strptime(*c, "%H:%M", &tm))) {
@@ -105,41 +95,59 @@ time_t parse_timestamp(char **c)
 	return mktime(&tm);
 }
 
-void parse_twtfile(struct feed *feed, UT_array *tweets)
+void skip_line(char **c)
 {
-	char *c = feed->content;
-	// TODO use size to check that i don't leave c
-	// start of line
-	while (*c != 0) {
+	for (char *i = *c; *i && *i != '\n'; i++) ;
+}
 
-		struct tweet *t = malloc(sizeof(struct tweet));
+void parse_twtfile(struct feed *feed, UT_array * tweets)
+{
+	char *c = utstring_body(feed->content);
+	while (*c) {
 
-		t->timestamp = parse_timestamp(&c);
+		time_t timestamp = parse_timestamp(&c);
 
-		assert(t->timestamp != -1);
+		if (timestamp == -1) {
+			while (*c && *c != '\n') {
+				c++;
+			}
+			if ( *c == '\n' ) c++;
 
-		while (*c == ' ' || *c == '\t') {
+			continue;
+		}
+
+
+		while (*c && (*c == '\t' || *c == ' ')) {
 			c++;
 		}
 
 		char *start_msg = c;
 
-		while (*c != '\n') {
+		while (*c && *c != '\n') {
+			if ( iscntrl(*c) ) {
+				*c = ' ';
+			}
 			c++;
 		}
 
 		size_t msg_size = c - start_msg;
 
+		struct tweet *t = malloc(sizeof(struct tweet));
+
+		if (!t)
+			oom();
+
 		t->msg = malloc(msg_size + 1);
-		assert(t->msg);
+
+		if (!t->msg)
+			oom();
+
 		memcpy(&(t->msg[0]), start_msg, msg_size);
 		t->msg[msg_size] = 0;
+		t->timestamp = timestamp;
 		t->nick = feed->nick;
 
 		utarray_push_back(tweets, &t);
-
-		// char buffer[6];
-		// strftime(buffer, sizeof(buffer), "%H:%M", gmtime(&(t->timestamp)));
 
 		// skip newline
 		c++;
@@ -151,22 +159,11 @@ feed_add_content(void *contents, size_t size, size_t nmemb, void *userp)
 {
 	size_t realsize = size * nmemb;
 	struct feed *feed = (struct feed *)userp;
-
-	feed->content = realloc(feed->content, feed->size + realsize + 1);
-	if (feed->content == NULL) {
-		/* out of memory! */
-		printf("not enough memory (realloc returned NULL)\n");
-		return 0;
-	}
-
-	memcpy(&(feed->content[feed->size]), contents, realsize);
-	feed->size += realsize;
-	feed->content[feed->size] = 0;
-
+	utstring_bincpy(feed->content, contents, realsize);
 	return realsize;
 }
 
-void feed_process(CURL * e, UT_array *tweets)
+void feed_process(CURL * e, UT_array * tweets)
 {
 	CURLcode res;
 	long code;
@@ -177,6 +174,7 @@ void feed_process(CURL * e, UT_array *tweets)
 	struct feed *feed;
 
 	switch (code) {
+	case 0:
 	case 200:
 		//TODO check res!
 		res = curl_easy_getinfo(e, CURLINFO_PRIVATE, &feed);
@@ -188,20 +186,20 @@ void feed_process(CURL * e, UT_array *tweets)
 	}
 }
 
-UT_array* feeds_get(struct feed *feeds[])
+UT_array *feeds_get(UT_array * feeds)
 {
 	curl_global_init(CURL_GLOBAL_SSL);
 	CURLM *multi_handle = curl_multi_init();
 
 	int still_running = 0;
 
-	for (int i = 0; feeds[i] != NULL; i++) {
-		struct feed *feed = feeds[i];
+	struct feed **p = NULL;
+
+	while ((p = (struct feed **)utarray_next(feeds, p))) {
+		struct feed *feed = *p;
 		CURL *c;
 
 		if ((c = curl_easy_init())) {
-			feed->content = malloc(1);
-			feed->size = 0;
 
 			curl_easy_setopt(c, CURLOPT_WRITEFUNCTION,
 					 feed_add_content);
@@ -275,12 +273,12 @@ UT_array* feeds_get(struct feed *feeds[])
 	return tweets;
 }
 
-void tweets_sort(UT_array *tweets)
+void tweets_sort(UT_array * tweets)
 {
 	utarray_sort(tweets, tweets_compare);
 }
 
-void tweets_display(UT_array *tweets)
+void tweets_display(UT_array * tweets)
 {
 
 	FILE *pager = stdout;
@@ -288,16 +286,18 @@ void tweets_display(UT_array *tweets)
 		pager = popen(pager_cmd, "w");
 	}
 
-	struct tweet ** tweet = NULL;
+	struct tweet **tweet = NULL;
 
-	while ( (tweet = (struct tweet **)utarray_next(tweets,tweet) )) {
+	while ((tweet = (struct tweet **)utarray_next(tweets, tweet))) {
 
 		struct tweet *t = *tweet;
 
 		//TODO fix hard limit on timestamp
+		time_t d = t->timestamp;
+		fprintf(pager, "%d\n", (int)d);
 		char timestamp[50];
 		int s = strftime(timestamp, sizeof(timestamp), time_format,
-				 localtime(&(t->timestamp)));
+				 localtime(&d));
 
 		if (!s) {
 			continue;
@@ -328,15 +328,59 @@ void database_create(const char *filename)
 	sqlite3_close(db);
 }
 
+int timeline(const char *filename)
+{
+
+	sqlite3 *db;
+	int rc = EXIT_SUCCESS;
+	// char *err_msg;
+
+	sqlite3_stmt *stmt;
+
+	rc = sqlite3_open(filename, &db);
+	if (rc != SQLITE_OK) {
+		return EXIT_FAILURE;
+	}
+
+	rc = sqlite3_prepare_v2(db, "select nick, url from followings", -1,
+				&stmt, NULL);
+
+	if (rc != SQLITE_OK) {
+		return EXIT_FAILURE;
+	}
+
+	UT_array *feeds;
+	utarray_new(feeds, &ut_ptr_icd);
+
+	while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+		struct feed *feed = malloc(sizeof(struct feed));
+		if (!feed) {
+			exit(EXIT_FAILURE);
+		}
+		feed->nick = strdup((const char *)sqlite3_column_text(stmt, 0));
+		feed->url = strdup((const char *)sqlite3_column_text(stmt, 1));
+		utstring_new(feed->content);
+
+		utarray_push_back(feeds, &feed);
+	}
+
+	sqlite3_finalize(stmt);
+
+	UT_array *tweets = feeds_get(feeds);
+	tweets_sort(tweets);
+	tweets_display(tweets);
+	return rc;
+}
+
 int follow(const char *filename, const char *nick, const char *url)
 {
 	sqlite3 *db;
-	int rc = SQLITE_OK;
+	int rc = EXIT_SUCCESS;
 	char *err_msg = NULL;
 
 	rc = sqlite3_open(filename, &db);
 	if (rc != SQLITE_OK) {
-		return rc;
+		return EXIT_FAILURE;
 	}
 
 	char *query =
@@ -347,7 +391,7 @@ int follow(const char *filename, const char *nick, const char *url)
 	rc = sqlite3_exec(db, query, NULL, NULL, &err_msg);
 	if (rc != SQLITE_OK) {
 		fprintf(stderr, "SQL error: %s\n", err_msg);
-		rc = -1;
+		rc = EXIT_FAILURE;
 	}
 
 	sqlite3_free(err_msg);
@@ -364,13 +408,15 @@ int main(int argc, char **argv, char **env)
 
 	char *xdg_home = getenv("XDG_CONFIG_HOME");
 
-	if ( xdg_home ) {
-		utstring_printf(db_file,strdup(xdg_home));
+	if (xdg_home) {
+		utstring_printf(db_file, strdup(xdg_home));
 	} else {
-		utstring_printf(db_file,"%s/%s", strdup(getenv("HOME")), strdup(".config"));
+		utstring_printf(db_file, "%s/%s", strdup(getenv("HOME")),
+				strdup(".config"));
 	}
 
-        utstring_printf(db_file, "%s/%s", strdup(basename(argv[0])), strdup("db.sqlite"));
+	utstring_printf(db_file, "%s/%s", strdup(basename(argv[0])),
+			strdup("db.sqlite"));
 
 	if (mkdir_p(dirname(strdup(utstring_body(db_file)))) != 0) {
 		fprintf(stderr, "%s: %s\n", basename(argv[0]), strerror(errno));
@@ -385,15 +431,26 @@ int main(int argc, char **argv, char **env)
 	}
 
 	if (strcmp(argv[1], "timeline") == 0) {
-
-		struct tweets *tweets = feeds_get(feeds);
-		tweets_sort(tweets);
-		tweets_display(tweets);
-
-		tweets_free(tweets);
+		timeline(utstring_body(db_file));
 
 	} else if (strcmp(argv[1], "follow") == 0) {
 		follow(utstring_body(db_file), argv[2], argv[3]);
+	} else if (strcmp(argv[1], "view") == 0) {
+		UT_array *feeds;
+		utarray_new(feeds, &ut_ptr_icd);
+
+		struct feed *feed = malloc(sizeof(struct feed));
+		if (!feed) {
+			exit(EXIT_FAILURE);
+		}
+		feed->nick = strdup(argv[2]);
+		feed->url = strdup(argv[3]);
+		utstring_new(feed->content);
+		utarray_push_back(feeds, &feed);
+
+		UT_array *tweets = feeds_get(feeds);
+		tweets_sort(tweets);
+		tweets_display(tweets);
 	} else {
 
 		fprintf(stderr, "%s: Unknown subcommand \"%s\"\n", argv[0],

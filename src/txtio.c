@@ -108,11 +108,7 @@ void parse_twtfile(struct feed *feed, UT_array * tweets)
 		time_t timestamp = parse_timestamp(&c);
 
 		if (timestamp == -1) {
-			while (*c && *c != '\n') {
-				c++;
-			}
-			if ( *c == '\n' ) c++;
-
+			while (*c && *c++ != '\n') ;
 			continue;
 		}
 

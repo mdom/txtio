@@ -288,14 +288,19 @@ void tweets_display(UT_array * tweets)
 
 		struct tweet *t = *tweet;
 
-		//TODO fix hard limit on timestamp
 		time_t d = t->timestamp;
-		char timestamp[50];
-		int s = strftime(timestamp, sizeof(timestamp), time_format,
-				 localtime(&d));
+		size_t buffer_size = 50;
+		char *timestamp = malloc(sizeof(char) * buffer_size);
+		if (!timestamp)
+			oom();
 
-		if (!s) {
-			continue;
+		while (strftime(timestamp, buffer_size, time_format,
+				localtime(&d)) == 0) {
+			timestamp = realloc(timestamp, buffer_size * 2);
+			if (!timestamp) {
+				oom();
+			}
+			buffer_size *= 2;
 		}
 
 		fprintf(pager, "* %s (%s)\n%s\n\n", t->nick, timestamp, t->msg);

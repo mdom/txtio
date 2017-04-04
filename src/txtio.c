@@ -426,11 +426,22 @@ int main(int argc, char **argv, char **env)
 	}
 
 	if (strcmp(argv[1], "timeline") == 0) {
+		if (argc != 2) {
+			fprintf(stderr, "%s: txtio timeline\n", argv[0]);
+		}
 		timeline(utstring_body(db_file));
 
 	} else if (strcmp(argv[1], "follow") == 0) {
+		if (argc != 4) {
+			fprintf(stderr, "%s: txtio follow nick url\n", argv[0]);
+			exit(EXIT_FAILURE);
+		}
 		follow(utstring_body(db_file), argv[2], argv[3]);
 	} else if (strcmp(argv[1], "view") == 0) {
+		if (argc != 4) {
+			fprintf(stderr, "%s: txtio view nick url\n", argv[0]);
+			exit(EXIT_FAILURE);
+		}
 		UT_array *feeds;
 		utarray_new(feeds, &ut_ptr_icd);
 

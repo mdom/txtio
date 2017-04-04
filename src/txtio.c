@@ -290,7 +290,6 @@ void tweets_display(UT_array * tweets)
 
 		//TODO fix hard limit on timestamp
 		time_t d = t->timestamp;
-		fprintf(pager, "%d\n", (int)d);
 		char timestamp[50];
 		int s = strftime(timestamp, sizeof(timestamp), time_format,
 				 localtime(&d));
